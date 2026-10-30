@@ -31,6 +31,27 @@ device and the app manages it.
   matches the old driver.
 - Connection device: **Log each message received**.
 
+## MQTT Manager or Hubitat's built-in MQTT integrations?
+
+Hubitat 2.5.0 and later include **MQTT Export** (sends hub device events to a
+broker) and **MQTT Import Integration** (beta, under **Integrations**). They do
+different jobs from MQTT Manager:
+
+| | MQTT Import Integration (built-in) | MQTT Manager |
+|---|---|---|
+| Best for | Devices that report a state: switches, sensors, locks, thermostats | Signals and triggers: doorbells, camera alerts, Node-RED flags, any text or JSON |
+| What it creates | Standard Hubitat devices from a fixed list of capabilities | One device per topic that stores whatever payload arrives |
+| Payloads | Each value must map to a capability's attribute (`ON` to `on`, and so on) | Any text, used as-is in rules |
+| Setup | Automatic for Home Assistant discovery, Zigbee2MQTT and Tasmota; a mapping wizard for other topics | Add a topic device from the app's pages |
+| Wildcards (`+`, `#`) | No, one mapping per topic | Yes |
+| Publishing from rules | Only through a mapped device's commands (on, off, setLevel...) | `publish(topic, payload, qos, retain)` for any topic and message |
+| Firmware | 2.5.0 or later, beta | Any firmware with MQTT support |
+
+Use the built-in integration when a topic is a device's state and you want a
+real switch or sensor that dashboards, voice assistants and other apps
+understand. Use MQTT Manager when you want a rule to react to a message, or to
+send any message to any topic. The two can run side by side on the same broker.
+
 ## Install
 
 1. Add the three files under **Apps Code** and **Drivers Code**.
