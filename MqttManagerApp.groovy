@@ -1,7 +1,7 @@
 /**
  *  MQTT Manager (app)
  *
- *  Version 0.1.0
+ *  Version 0.1.1
  *  https://github.com/youzer-name/Hubitat-MQTT-Manager (MIT License)
  *
  *  Sets up one MQTT broker connection and lets you add, edit and delete the
@@ -112,18 +112,38 @@ private Map topicOptions(List<Map> rows) {
 // ---------------------------------------------------------------------------
 // Pages
 
-def mainPage() {
-    // Each visit to a sub-page starts from the device's current values.
-    ["addName", "addTopic", "addQos", "editDni", "editName", "editTopic", "editQos", "delDni",
-     "cfgBroker", "cfgClientId", "cfgUser", "cfgPass", "cfgClearPass", "cfgLwtTopic", "cfgLwtMessage"]
-        .each { app.removeSetting(it) }
-    state.remove("editLoaded")
-    state.remove("brokerLoaded")
-    state.remove("msg")
+// Field names used by the sub-pages.
+@Field static final List<String> ADD_FIELDS = ["addName", "addTopic", "addQos"]
+@Field static final List<String> EDIT_FIELDS = ["editDni", "editName", "editTopic", "editQos"]
+@Field static final List<String> BROKER_FIELDS = ["cfgBroker", "cfgClientId", "cfgUser", "cfgPass", "cfgClearPass",
+                                                  "cfgLwtTopic", "cfgLwtMessage"]
 
+def mainPage() {
     def conn = getConn()
+
+    // Sub-pages save when you click their Done button, which submits the page
+    // and comes back here. (Buttons on a page don't send what you typed, so
+    // they can't be used to save text fields.)
+    String pending = state.remove("pending")
+    boolean failed = false
+    if (pending && connReady(conn)) {
+        Map result = applyPending(pending, conn)
+        if (result) {
+            state.msg = result
+            failed = !result.ok
+        }
+    }
+
+    // Each visit to a sub-page starts from the device's current values, unless
+    // a save just failed, in which case the typed values are kept for a retry.
+    if (!failed) {
+        (ADD_FIELDS + EDIT_FIELDS + BROKER_FIELDS + ["delDni"]).each { app.removeSetting(it) }
+        state.remove("editLoaded")
+        state.remove("brokerLoaded")
+    }
+
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section() { paragraph pageHeader("MQTT Manager") }
+        section() { paragraph pageHeader("MQTT Manager") + flash() }
         if (!conn) {
             setupSections()
         } else if (!connReady(conn)) {
@@ -197,8 +217,10 @@ def brokerPage() {
         state.brokerLoaded = true
     }
     boolean hasPass = conn?.getSetting("password") as boolean
+    state.pending = "broker"
     dynamicPage(name: "brokerPage", title: "") {
-        section() { paragraph pageHeader("Broker settings") + flash() }
+        section() { paragraph pageHeader("Broker settings") + flash() +
+                    hint("Click <b>Done</b> to save. The connection restarts only if something changed.") }
         section() {
             input "cfgBroker", "text", title: "Broker URL", description: "tcp://host:1883 or ssl://host:8883", required: true
             input "cfgClientId", "text", title: "Client ID", description: "Must be unique on the broker", required: true
@@ -209,21 +231,20 @@ def brokerPage() {
             input "cfgLwtTopic", "text", title: "Last-will topic", required: false
             input "cfgLwtMessage", "text", title: "Last-will message", required: false
         }
-        section() { input "btnSaveBroker", "button", title: "Save and reconnect" }
     }
 }
 
 def addPage() {
-    def conn = getConn()
+    state.pending = "add"
     dynamicPage(name: "addPage", title: "") {
-        section() { paragraph pageHeader("Add a topic device") + flash() }
+        section() { paragraph pageHeader("Add a topic device") + flash() +
+                    hint("Fill in the name and topic, then click <b>Done</b> to create the device.") }
         section() {
             input "addName", "text", title: "Device name", required: false
             input "addTopic", "text", title: "Topic", required: false,
                   description: "e.g. home/doorbell. Wildcards: + for one level, # for the rest"
             input "addQos", "enum", title: "QoS", options: qosOptions(), defaultValue: "1", required: false
         }
-        section() { input "btnAdd", "button", title: "Add device" }
     }
 }
 
@@ -237,8 +258,10 @@ def editPage() {
         app.updateSetting("editQos", [value: (row.qos ?: 1).toString(), type: "enum"])
         state.editLoaded = row.dni
     }
+    state.pending = "edit"
     dynamicPage(name: "editPage", title: "") {
-        section() { paragraph pageHeader("Edit a topic device") + flash() }
+        section() { paragraph pageHeader("Edit a topic device") + flash() +
+                    hint("Pick a device, make your changes, then click <b>Done</b> to save.") }
         section() {
             input "editDni", "enum", title: "Device", options: topicOptions(rows), required: false, submitOnChange: true
         }
@@ -251,7 +274,6 @@ def editPage() {
                       description: "Wildcards: + for one level, # for the rest"
                 input "editQos", "enum", title: "QoS", options: qosOptions(), required: false
             }
-            section() { input "btnSave", "button", title: "Save changes" }
         }
     }
 }
@@ -286,30 +308,6 @@ void appButtonHandler(String btn) {
             conn.initialize()
             break
 
-        case "btnAdd":
-            String err = topicProblem(settings.addTopic) ?: (settings.addName?.trim() ? null : "Enter a device name.")
-            if (err) { state.msg = [ok: false, text: err]; break }
-            Set before = topicRows(conn)*.dni as Set
-            conn.addTopic(settings.addName.trim(), settings.addTopic.trim(), (settings.addQos ?: "1") as int)
-            if (topicRows(conn).any { !(it.dni in before) }) {
-                state.msg = [ok: true, text: "Added <b>${esc(settings.addName.trim())}</b> on <code>${esc(settings.addTopic.trim())}</code>."]
-                ["addName", "addTopic", "addQos"].each { app.removeSetting(it) }
-            } else {
-                state.msg = [ok: false, text: "Couldn't add the device. See Logs for details."]
-            }
-            break
-
-        case "btnSave":
-            if (!settings.editDni) break
-            String err = topicProblem(settings.editTopic) ?: (settings.editName?.trim() ? null : "Enter a device name.")
-            if (err) { state.msg = [ok: false, text: err]; break }
-            conn.updateTopic(settings.editDni, settings.editName.trim(), settings.editTopic.trim(),
-                             (settings.editQos ?: "1") as int)
-            Map after = topicRows(conn).find { it.dni == settings.editDni }
-            boolean ok = after && after.topic == settings.editTopic.trim() && after.name == settings.editName.trim()
-            state.msg = ok ? [ok: true, text: "Saved."] : [ok: false, text: "Couldn't save. See Logs for details."]
-            break
-
         case "btnDelete":
             if (!settings.delDni) break
             String name = topicRows(conn).find { it.dni == settings.delDni }?.name ?: "device"
@@ -318,29 +316,86 @@ void appButtonHandler(String btn) {
             state.msg = ok ? [ok: true, text: "Deleted <b>${esc(name)}</b>."] : [ok: false, text: "Couldn't delete. See Logs for details."]
             app.removeSetting("delDni")
             break
-
-        case "btnSaveBroker":
-            if (!settings.cfgBroker?.trim() || !settings.cfgClientId?.trim()) {
-                state.msg = [ok: false, text: "Broker URL and client ID are needed."]
-                break
-            }
-            if (!(settings.cfgBroker.trim() ==~ /(?i)^(tcp|ssl|ws|wss):\/\/.+/)) {
-                state.msg = [ok: false, text: "The broker URL should start with tcp:// or ssl://"]
-                break
-            }
-            conn.updateSetting("broker", [value: settings.cfgBroker.trim(), type: "text"])
-            conn.updateSetting("clientId", [value: settings.cfgClientId.trim(), type: "text"])
-            conn.updateSetting("username", [value: settings.cfgUser?.trim() ?: "", type: "text"])
-            if (settings.cfgClearPass) conn.updateSetting("password", [value: "", type: "password"])
-            else if (settings.cfgPass) conn.updateSetting("password", [value: settings.cfgPass, type: "password"])
-            conn.updateSetting("lwtTopic", [value: settings.cfgLwtTopic?.trim() ?: "hubitat/lwt", type: "text"])
-            conn.updateSetting("lwtMessage", [value: settings.cfgLwtMessage ?: "disconnected", type: "text"])
-            app.removeSetting("cfgPass")
-            app.updateSetting("cfgClearPass", [value: "false", type: "bool"])
-            conn.initialize()
-            state.msg = [ok: true, text: "Saved. Reconnecting&hellip;"]
-            break
     }
+}
+
+// ---------------------------------------------------------------------------
+// Saving sub-pages (runs when the main page loads after a sub-page's Done)
+
+// Returns a message to show, or null when there was nothing to save.
+private Map applyPending(String page, conn) {
+    try {
+        switch (page) {
+            case "add": return applyAdd(conn)
+            case "edit": return applyEdit(conn)
+            case "broker": return applyBroker(conn)
+        }
+    } catch (e) {
+        log.error "Saving ${page} page failed: ${e}"
+        return [ok: false, text: "Couldn't save. See Logs for details."]
+    }
+    return null
+}
+
+private Map applyAdd(conn) {
+    String name = settings.addName?.trim()
+    String topic = settings.addTopic?.trim()
+    if (!name && !topic) return null
+    String err = topicProblem(topic) ?: (name ? null : "Enter a device name.")
+    if (err) return [ok: false, text: "Device not added: ${err} Open <b>Add a topic device</b> to fix it."]
+    Set before = topicRows(conn)*.dni as Set
+    conn.addTopic(name, topic, (settings.addQos ?: "1") as int)
+    if (topicRows(conn).any { !(it.dni in before) }) {
+        return [ok: true, text: "Added <b>${esc(name)}</b> on <code>${esc(topic)}</code>."]
+    }
+    return [ok: false, text: "Couldn't add the device. See Logs for details."]
+}
+
+private Map applyEdit(conn) {
+    if (!settings.editDni) return null
+    Map row = topicRows(conn).find { it.dni == settings.editDni }
+    if (!row) return [ok: false, text: "That device no longer exists."]
+    String name = settings.editName?.trim()
+    String topic = settings.editTopic?.trim()
+    int qos = (settings.editQos ?: "1") as int
+    if (name == row.name && topic == row.topic && qos == ((row.qos ?: 0) as int)) return null
+    String err = topicProblem(topic) ?: (name ? null : "Enter a device name.")
+    if (err) return [ok: false, text: "Not saved: ${err} Open <b>Edit a topic device</b> to fix it."]
+    conn.updateTopic(settings.editDni, name, topic, qos)
+    Map after = topicRows(conn).find { it.dni == settings.editDni }
+    if (after && after.topic == topic && after.name == name) {
+        return [ok: true, text: "Saved <b>${esc(name)}</b>."]
+    }
+    return [ok: false, text: "Couldn't save. See Logs for details."]
+}
+
+private Map applyBroker(conn) {
+    if (!state.brokerLoaded) return null
+    String broker = settings.cfgBroker?.trim()
+    String clientId = settings.cfgClientId?.trim()
+    if (!broker || !clientId) {
+        return [ok: false, text: "Broker settings not saved: the broker URL and client ID are needed."]
+    }
+    if (!(broker ==~ /(?i)^(tcp|ssl|ws|wss):\/\/.+/)) {
+        return [ok: false, text: "Broker settings not saved: the broker URL should start with tcp:// or ssl://"]
+    }
+    Map wanted = [broker    : broker,
+                  clientId  : clientId,
+                  username  : settings.cfgUser?.trim() ?: "",
+                  lwtTopic  : settings.cfgLwtTopic?.trim() ?: "hubitat/lwt",
+                  lwtMessage: settings.cfgLwtMessage ?: "disconnected"]
+    boolean clearPass = settings.cfgClearPass?.toString() == "true"
+    String newPass = settings.cfgPass ?: null
+
+    List<String> changed = wanted.findAll { k, v -> (conn.getSetting(k) ?: "") != v }.keySet() as List
+    if (clearPass || newPass) changed << "password"
+    if (!changed) return null
+
+    wanted.each { k, v -> conn.updateSetting(k, [value: v, type: "text"]) }
+    if (clearPass) conn.updateSetting("password", [value: "", type: "password"])
+    else if (newPass) conn.updateSetting("password", [value: newPass, type: "password"])
+    conn.initialize()
+    return [ok: true, text: "Broker settings saved (${changed.join(', ')}). Reconnecting..."]
 }
 
 // Same rules as the driver, checked here so the page can say what's wrong.
@@ -373,6 +428,10 @@ private String flash() {
     String color = m.ok ? "#1b7f3b" : "#b3261e"
     String bg = m.ok ? "#e7f5ec" : "#fdecea"
     return "<div style='margin-top:8px;padding:8px 12px;border-radius:6px;background:${bg};color:${color}'>${m.text}</div>"
+}
+
+private static String hint(String html) {
+    "<div style='margin-top:6px;color:#555'>${html}</div>"
 }
 
 private static String warn(String html) {
