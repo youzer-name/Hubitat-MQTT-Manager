@@ -76,3 +76,14 @@ send any message to any topic. The two can run side by side on the same broker.
 4. Open the app again to add topic devices.
 
 Removing the app also removes its connection device and topic devices.
+
+## Screenshots
+
+### App Page ###
+
+<img width="1727" height="889" alt="MQTT manager screenshot 1" src="https://github.com/user-attachments/assets/40400127-f52f-4bb4-9c74-082dcbd542d8" />
+
+### Device Preferences Page ###
+
+<img width="1788" height="582" alt="device preferences" src="https://github.com/user-attachments/assets/61d0316d-f2f6-446a-8fc4-807365e7190a" />
+
