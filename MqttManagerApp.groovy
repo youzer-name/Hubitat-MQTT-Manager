@@ -1,16 +1,15 @@
 /**
  *  MQTT Manager (app)
  *
- *  Version 0.1.1
+ *  Version 0.2.0
  *  https://github.com/youzer-name/Hubitat-MQTT-Manager (MIT License)
  *
  *  Sets up one MQTT broker connection and lets you add, edit and delete the
  *  topic devices that receive its messages.
  *
  *  The connection itself lives in an "MQTT Manager Connection" device, because
- *  only drivers can talk MQTT. This app either creates that device or adopts
- *  one you already have (for example, one switched over from the old
- *  parasaurolophus "MQTT Connection" driver, which keeps its device IDs).
+ *  only drivers can talk MQTT. The app creates that device on first setup and
+ *  removes it when the app is removed.
  */
 
 import groovy.json.JsonSlurper
@@ -50,13 +49,12 @@ void updated() {
 }
 
 void initialize() {
-    if (settings.setupMode == "new" && !state.connDni && settings.newBroker?.trim()) {
+    if (!state.connDni && settings.newBroker?.trim()) {
         createConnection()
     }
 }
 
 void uninstalled() {
-    // A connection created by this app is removed with it; an adopted one is left alone.
     getChildDevices().each { deleteChildDevice(it.deviceNetworkId) }
 }
 
@@ -79,15 +77,9 @@ private void createConnection() {
     log.info "Created ${conn} for ${conn.getSetting('broker')}"
 }
 
-// The connection device: one this app created, or one picked by the user.
+// The connection device this app created, or null before setup.
 private getConn() {
-    if (state.connDni) return getChildDevice(state.connDni)
-    if (settings.setupMode == "existing") return settings.existingConn
-    return null
-}
-
-private boolean connReady(conn) {
-    return conn && conn.hasCommand("addTopic")
+    return state.connDni ? getChildDevice(state.connDni) : null
 }
 
 // Asks the connection device to save a fresh topic list in its device data,
@@ -126,7 +118,7 @@ def mainPage() {
     // they can't be used to save text fields.)
     String pending = state.remove("pending")
     boolean failed = false
-    if (pending && connReady(conn)) {
+    if (pending && conn) {
         Map result = applyPending(pending, conn)
         if (result) {
             state.msg = result
@@ -146,15 +138,6 @@ def mainPage() {
         section() { paragraph pageHeader("MQTT Manager") + flash() }
         if (!conn) {
             setupSections()
-        } else if (!connReady(conn)) {
-            section("Connection") {
-                paragraph warn("<b>${esc(conn.displayName)}</b> isn't using the <b>${CONN_DRIVER}</b> driver yet. " +
-                    "Open <a href='/device/edit/${conn.id}' target='_blank'>its device page</a>, change <b>Type</b> " +
-                    "to <b>${CONN_DRIVER}</b>, click <b>Save Device</b>, then come back here. " +
-                    "Its topic devices and their IDs stay the same.")
-                if (!state.connDni) input "existingConn", "capability.initialize", title: "Connection device",
-                                          required: true, submitOnChange: true
-            }
         } else {
             List<Map> rows = topicRows(conn)
             section("Connection") {
@@ -175,32 +158,18 @@ def mainPage() {
             }
             section("App") {
                 label title: "App name (optional)", required: false
-                if (!state.connDni) input "existingConn", "capability.initialize", title: "Connection device",
-                                          required: true, submitOnChange: true
             }
         }
     }
 }
 
 private void setupSections() {
-    section("Set up") {
-        input "setupMode", "enum", title: "Connection", required: true, submitOnChange: true,
-              options: ["new": "Create a new connection", "existing": "Use an existing connection device"]
-    }
-    if (settings.setupMode == "new") {
-        section("Broker") {
-            input "newBroker", "text", title: "Broker URL", description: "tcp://host:1883 or ssl://host:8883",
-                  required: true, submitOnChange: true
-            input "newUser", "text", title: "Username (optional)", required: false
-            input "newPass", "password", title: "Password (optional)", required: false
-            paragraph "Click <b>Done</b> to create the connection device, then open this app again to add topic devices."
-        }
-    } else if (settings.setupMode == "existing") {
-        section("Connection device") {
-            input "existingConn", "capability.initialize", title: "Connection device", required: true, submitOnChange: true
-            paragraph "Pick your MQTT connection device. If it still uses the old " +
-                      "<b>MQTT Connection</b> driver, you'll be shown how to switch it over."
-        }
+    section("Broker") {
+        input "newBroker", "text", title: "Broker URL", description: "tcp://host:1883 or ssl://host:8883",
+              required: true
+        input "newUser", "text", title: "Username (optional)", required: false
+        input "newPass", "password", title: "Password (optional)", required: false
+        paragraph "Click <b>Done</b> to create the connection device, then open this app again to add topic devices."
     }
 }
 
@@ -243,7 +212,8 @@ def addPage() {
             input "addName", "text", title: "Device name", required: false
             input "addTopic", "text", title: "Topic", required: false,
                   description: "e.g. home/doorbell. Wildcards: + for one level, # for the rest"
-            input "addQos", "enum", title: "QoS", options: qosOptions(), defaultValue: "1", required: false
+            input "addQos", "enum", title: "QoS", options: qosOptions(), defaultValue: "1", required: false,
+                  description: "Used to subscribe, and as the default when sending"
         }
     }
 }
@@ -272,7 +242,8 @@ def editPage() {
                 input "editName", "text", title: "Device name", required: false
                 input "editTopic", "text", title: "Topic", required: false,
                       description: "Wildcards: + for one level, # for the rest"
-                input "editQos", "enum", title: "QoS", options: qosOptions(), required: false
+                input "editQos", "enum", title: "QoS", options: qosOptions(), required: false,
+                      description: "Used to subscribe, and as the default when sending. Also on the device's page"
             }
         }
     }
@@ -302,7 +273,7 @@ def deletePage() {
 
 void appButtonHandler(String btn) {
     def conn = getConn()
-    if (!connReady(conn)) return
+    if (!conn) return
     switch (btn) {
         case "btnReconnect":
             conn.initialize()

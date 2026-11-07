@@ -1,23 +1,17 @@
 /**
  *  MQTT Manager Connection (driver)
  *
- *  Version 0.1.0
+ *  Version 0.2.0
  *  https://github.com/youzer-name/Hubitat-MQTT-Manager (MIT License)
  *
  *  Holds the connection to an MQTT broker and passes incoming messages to its
  *  MQTT Manager Topic child devices. Normally set up and managed by the
  *  "MQTT Manager" app, but it also works on its own.
  *
- *  Drop-in replacement for parasaurolophus's "MQTT Connection" driver:
- *   - Same setting names, same "connection" attribute and same
- *     publish(topic, payload, qos, retain) command, so rules keep working.
- *   - Picks up the old driver's topics after a driver change (see loadTopics).
- *   - Its old child devices ("MQTT Handler") keep working as they are.
- *
- *  Improvements over the old driver:
- *   - Reconnects on a timer with backoff instead of blocking a hub thread.
+ *   - publish(topic, payload, qos, retain) sends to any topic, for rules.
  *   - Topic filters can use MQTT wildcards (+ and #).
  *   - Several devices can listen on the same topic.
+ *   - Reconnects on a timer with backoff, plus a once-a-minute check.
  */
 
 import groovy.json.JsonOutput
@@ -102,7 +96,6 @@ void updated() {
 
 void initialize() {
     loadTopics()
-    unschedule("initialize")  // already starting up; skip loadTopics' delayed start
     state.retryIndex = 0
     unschedule("connect")
     closeConnection()
@@ -215,7 +208,6 @@ void mqttClientStatus(String message) {
 // Messages
 
 void parse(String raw) {
-    // Messages can arrive right after a driver switch, before anything else runs.
     loadTopics()
     Map msg = interfaces.mqtt.parseMessage(raw)
     String topic = msg.topic
@@ -230,9 +222,7 @@ void parse(String raw) {
         if (topicMatches(t.topic as String, topic)) {
             def child = getChildDevice(dni)
             if (child) {
-                Map evt = [name: "payload", value: payload]
-                if (child.getSetting("everyMessage")) evt.isStateChange = true
-                child.sendEvent(evt)
+                child.parse(payload)
                 if (txtEnable) log.info "${child}: ${payload}"
             }
         }
@@ -310,12 +300,13 @@ String addTopic(String name, String topic, qos = 1) {
         def child = addChildDevice(NAMESPACE, TOPIC_DRIVER, dni,
                                    [name: name.trim(), label: name.trim(), isComponent: true])
         child.sendEvent(name: "topic", value: topic.trim())
+        setChildQos(child, qos)
     } catch (e) {
         log.error "${device}: could not create topic device: ${e.message}"
         return null
     }
     Map topics = state.topics ?: [:]
-    topics[dni] = [topic: topic.trim(), qos: toQos(qos)]
+    topics[dni] = [topic: topic.trim()]
     state.topics = topics
     syncSubscriptions()
     log.info "${device}: added '${name}' on ${topic}"
@@ -337,8 +328,9 @@ boolean updateTopic(String dni, String name, String topic, qos = 1) {
         return false
     }
     Map topics = state.topics ?: [:]
-    topics[dni] = [topic: topic.trim(), qos: toQos(qos)]
+    topics[dni] = [topic: topic.trim()]
     state.topics = topics
+    setChildQos(child, qos)
     if (name?.trim() && name.trim() != child.displayName) child.setLabel(name.trim())
     syncSubscriptions()
     child.sendEvent(name: "topic", value: topic.trim())
@@ -372,6 +364,8 @@ boolean removeTopic(String dni) {
 // Saves one row per topic device as JSON in the device data "topicList", for
 // the app to read. (When an app calls a command on a device it doesn't own,
 // it doesn't get the return value, so the list is passed through device data.)
+// Device data also survives a driver change, which clears state; loadTopics
+// reads the list back from here.
 String listTopics() {
     loadTopics()
     Map topics = state.topics ?: [:]
@@ -382,7 +376,7 @@ String listTopics() {
          id          : child.id,
          name        : child.displayName,
          topic       : t.topic,
-         qos         : t.qos,
+         qos         : childQos(child),
          payload     : last?.value,
          lastReceived: last?.date?.time]
     }.sort { it.name?.toLowerCase() }
@@ -401,14 +395,30 @@ void childPublish(String dni, String payload, qos, retain) {
     publish(topic, payload, qos, retain)
 }
 
+// Called by a topic device when its settings are saved, since its QoS
+// setting is what we subscribe with.
+void topicSettingsChanged() {
+    syncSubscriptions()
+    listTopics()
+}
+
+// Each topic device's "QoS" setting is the one place its QoS is kept.
+private int childQos(child) {
+    return toQos(child?.getSetting("topicQos") ?: 1)
+}
+
+private void setChildQos(child, qos) {
+    child.updateSetting("topicQos", [value: toQos(qos).toString(), type: "enum"])
+}
+
 // Subscribes to what the topic devices need and drops what they don't.
 // A filter covered by a wider one (home/a under home/+) isn't subscribed
 // separately, so the broker doesn't send the same message twice.
 private void syncSubscriptions() {
     if (!interfaces.mqtt.isConnected()) return
     Map<String, Integer> need = [:]
-    (state.topics ?: [:]).values().each { t ->
-        if (t.topic) need[t.topic as String] = Math.max(need[t.topic as String] ?: 0, toQos(t.qos))
+    (state.topics ?: [:]).each { String dni, Map t ->
+        if (t.topic) need[t.topic as String] = Math.max(need[t.topic as String] ?: 0, childQos(getChildDevice(dni)))
     }
     Map<String, Integer> want = [:]
     need.each { f, q ->
@@ -459,15 +469,8 @@ private static int toQos(qos) {
     }
 }
 
-// Loads the topic list into state.topics the first time it's needed.
-//
-// Hubitat clears a device's state when its driver changes, so the list is also
-// kept in the device data "topicList" (written by listTopics), which survives.
-// Sources, in order:
-//   1. device data "topicList" (this driver, before a driver change)
-//   2. state.handlers (the old parasaurolophus driver: [topic: [id: dni, qos: n]])
-//   3. the latest "topic" event on each child (the old driver sent one)
-// Children still without a topic show up in the app as needing one.
+// Loads the topic list into state.topics the first time it's needed, from
+// the "topicList" device data if state was cleared.
 private void loadTopics() {
     if (state.topics != null) return
     Map topics = [:]
@@ -475,30 +478,15 @@ private void loadTopics() {
     if (saved) {
         try {
             new groovy.json.JsonSlurper().parseText(saved).each { r ->
-                if (r.dni && r.topic) topics[r.dni] = [topic: r.topic, qos: toQos(r.qos)]
+                if (r.dni && r.topic) topics[r.dni] = [topic: r.topic]
             }
         } catch (e) {
             log.warn "${device}: couldn't read saved topic list: ${e.message}"
         }
     }
-    (state.handlers ?: [:]).each { topic, h ->
-        if (h?.id && !topics[h.id]) topics[h.id] = [topic: topic, qos: toQos(h.qos)]
-    }
-    getChildDevices().each { child ->
-        if (topics[child.deviceNetworkId]) return
-        try {
-            def evt = child.events(max: 50).find { it.name == "topic" }
-            if (evt?.value) topics[child.deviceNetworkId] = [topic: evt.value, qos: 1]
-        } catch (ignored) {}
-    }
     state.topics = topics
-    ["handlers", "reconnect", "connected"].each { state.remove(it) }
-    List missing = getChildDevices().findAll { !topics[it.deviceNetworkId] }*.displayName
-    log.info "${device}: loaded ${topics.size()} topic(s)" + (missing ? "; no topic known for: ${missing.join(', ')}" : "")
+    if (topics) log.info "${device}: loaded ${topics.size()} topic(s)"
     listTopics()
-    // First run on this driver (e.g. right after a driver change): start cleanly
-    // so subscriptions and the connection watchdog are set up.
-    if (settings.broker?.trim() && state.wantConnected == null) runIn(2, "initialize")
 }
 
 private void logDebug(String msg) {
