@@ -1,8 +1,6 @@
 # MQTT Manager for Hubitat
 
-An app plus two drivers for receiving and sending MQTT messages on Hubitat.
-Add, edit and delete topic devices from the app's pages instead of typing
-commands on a device page.
+An app plus two drivers for receiving and sending MQTT messages on Hubitat. Creates a connection device and one child device per subscribed topic. Provides an app page to easily manage MQTT broker settings and add/edit/delete topic devices.  The app displays the connection status and shows the last message received by each topic device.  QOS and retain flag are settable for each topic device.
 
 ## Parts
 
@@ -12,9 +10,6 @@ commands on a device page.
 | `MqttManagerConnection.groovy` | Driver | Holds the broker connection, routes incoming messages to topic devices, and has the `publish(topic, payload, qos, retain)` command for rules. |
 | `MqttManagerTopic.groovy` | Driver | One device per topic. Each message sets its `payload` attribute. Also a switch, a button and a notification device (see below), plus a `publish` command that sends to its own topic. |
 
-Only drivers can open an MQTT connection on Hubitat, so the connection lives in a
-device and the app manages it.
-
 ## Features
 
 - Topic filters can use MQTT wildcards: `+` for one level, `#` for the rest.
@@ -22,7 +17,7 @@ device and the app manages it.
 - Reconnects on its own with backoff (5 s up to 5 min), plus a once-a-minute check.
 - Overlapping subscriptions (like `home/+` and `home/door`) are merged, so the
   broker doesn't send the same message twice.
-- Connection device: **Log each message received**.
+- Logging: Option to log each message received by the parent connection device.
 
 ## Topic devices
 
