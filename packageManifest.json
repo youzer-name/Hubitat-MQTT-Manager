@@ -1,0 +1,38 @@
+{
+  "packageName": "MQTT Manager",
+  "author": "youzer-name",
+  "version": "0.2.0",
+  "minimumHEVersion": "2.5.2",
+  "dateReleased": "2026-11-07",
+  "documentationLink": "https://github.com/youzer-name/Hubitat-MQTT-Manager#readme",
+  "communityLink": "",
+  "releaseNotes": "First release. One device per MQTT topic (wildcards supported) with payload, switch, button and notification support, per-topic QoS and retain, and publish to any topic from rules.",
+  "apps": [
+    {
+      "id": "be6b36be-f99e-4c8e-a972-958a873fee9a",
+      "name": "MQTT Manager",
+      "namespace": "youzer-name",
+      "location": "https://raw.githubusercontent.com/youzer-name/Hubitat-MQTT-Manager/main/MqttManagerApp.groovy",
+      "required": true,
+      "oauth": false,
+      "primary": true
+    }
+  ],
+  "drivers": [
+    {
+      "id": "ff9be3c8-9a56-4954-8ffd-090da5cf3510",
+      "name": "MQTT Manager Connection",
+      "namespace": "youzer-name",
+      "location": "https://raw.githubusercontent.com/youzer-name/Hubitat-MQTT-Manager/main/MqttManagerConnection.groovy",
+      "required": true
+    },
+    {
+      "id": "ace4718a-c330-4a77-b832-05d13b50eba5",
+      "name": "MQTT Manager Topic",
+      "namespace": "youzer-name",
+      "location": "https://raw.githubusercontent.com/youzer-name/Hubitat-MQTT-Manager/main/MqttManagerTopic.groovy",
+      "required": true
+    }
+  ],
+  "licenseFile": "https://raw.githubusercontent.com/youzer-name/Hubitat-MQTT-Manager/main/LICENSE"
+}

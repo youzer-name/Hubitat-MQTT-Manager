@@ -59,7 +59,7 @@ different jobs from MQTT Manager:
 | Setup | Automatic for Home Assistant discovery, Zigbee2MQTT and Tasmota; a mapping wizard for other topics | Add a topic device from the app's pages |
 | Wildcards (`+`, `#`) | No, one mapping per topic | Yes |
 | Publishing from rules | Only through a mapped device's commands (on, off, setLevel...) | `publish(topic, payload, qos, retain)` for any topic and message |
-| Firmware | 2.5.0 or later, beta | Any firmware with MQTT support |
+| Firmware | 2.5.0 or later, beta | 2.5.2 or later (the version it's tested on) |
 
 Use the built-in integration when a topic is a device's state and you want a
 real switch or sensor that dashboards, voice assistants and other apps
@@ -68,12 +68,28 @@ send any message to any topic. The two can run side by side on the same broker.
 
 ## Install
 
-1. Add the three files under **Apps Code** and **Drivers Code**.
-2. **Apps > Add User App > MQTT Manager**.
-3. Enter the broker URL (`tcp://host:1883` or `ssl://host:8883`) and, if your
+You need an MQTT broker on your network, such as Mosquitto.
+
+### With Hubitat Package Manager (recommended)
+
+1. In **Hubitat Package Manager**, choose **Install**, then **Search by Keywords**,
+   and search for `MQTT Manager`.
+2. Install the package. HPM adds the app and both drivers, and keeps them updated.
+3. Follow the setup steps below.
+
+### Manually
+
+Add `MqttManagerApp.groovy` under **Apps Code**, and `MqttManagerConnection.groovy`
+and `MqttManagerTopic.groovy` under **Drivers Code**. To update later, open each
+one and use **Import**.
+
+### Setup
+
+1. **Apps > Add User App > MQTT Manager**.
+2. Enter the broker URL (`tcp://host:1883` or `ssl://host:8883`) and, if your
    broker needs them, a username and password. Click **Done** to create the
    connection device.
-4. Open the app again to add topic devices.
+3. Open the app again to add topic devices.
 
 Removing the app also removes its connection device and topic devices.
 
