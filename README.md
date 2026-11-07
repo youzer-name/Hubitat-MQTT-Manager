@@ -2,6 +2,8 @@
 
 An app plus two drivers for receiving and sending MQTT messages on Hubitat. Creates a connection device and one child device per subscribed topic. Provides an app page to easily manage MQTT broker settings and add/edit/delete topic devices.  The app displays the connection status and shows the last message received by each topic device.  QOS and retain flag are settable for each topic device.
 
+Community thread: https://community.hubitat.com/t/release-mqtt-manager-improved-app-drivers-for-mqtt-messaging/167340
+
 ## Parts
 
 | File | Type | What it does |

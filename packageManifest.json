@@ -5,7 +5,7 @@
   "minimumHEVersion": "2.5.2",
   "dateReleased": "2026-11-07",
   "documentationLink": "https://github.com/youzer-name/Hubitat-MQTT-Manager#readme",
-  "communityLink": "",
+  "communityLink": "https://community.hubitat.com/t/release-mqtt-manager-improved-app-drivers-for-mqtt-messaging/167340",
   "releaseNotes": "First release. One device per MQTT topic (wildcards supported) with payload, switch, button and notification support, per-topic QoS and retain, and publish to any topic from rules.",
   "apps": [
     {
